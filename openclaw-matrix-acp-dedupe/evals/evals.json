@@ -1,0 +1,33 @@
+{
+  "skill_name": "openclaw-matrix-acp-dedupe",
+  "evals": [
+    {
+      "id": 1,
+      "name": "basic-apply",
+      "prompt": "我在 Element 里用 OpenClaw 的 ACP 会话调用 OpenCode，每次回复都发两条一样的消息，怎么修复？",
+      "expected_output": "识别为 Matrix ACP 重复回复问题，自动运行修补脚本或在 Matrix 插件 outbound 对象中添加 shouldTreatDeliveredTextAsVisible 方法，并重启 Gateway",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "check-status",
+      "prompt": "帮我检查一下我的 OpenClaw Matrix 插件是否已经修补了 ACP 重复回复的问题",
+      "expected_output": "运行 --check 或搜索 Matrix 插件文件中的 shouldTreatDeliveredTextAsVisible，报告当前修补状态",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "post-upgrade-reattach",
+      "prompt": "我刚升级了 OpenClaw 到最新版，之前修补的 Matrix ACP 去重补丁可能没了，怎么重新应用？",
+      "expected_output": "运行修补脚本的 --apply 命令，或手动在升级后的 Matrix 插件 outbound 对象中添加 shouldTreatDeliveredTextAsVisible，然后重启 Gateway",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "config-confusion",
+      "prompt": "我在 OpenClaw 配置里加了 acp.stream.repeatSuppression: true 和 deliveryMode: final_only 来去重，但 Matrix 里 ACP 回复还是重复，为什么？",
+      "expected_output": "解释 repeatSuppression 仅作用于工具状态事件去重，deliveryMode 仅控制增量投递时机，二者均不影响 block reply 和 final fallback 之间的重复。根因是 Matrix 插件缺少 shouldTreatDeliveredTextAsVisible，需要修补插件文件",
+      "files": []
+    }
+  ]
+}
