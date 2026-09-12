@@ -1,0 +1,33 @@
+{
+  "skill_name": "matrix-self-host-expert",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我在一台国内的 Ubuntu 24.04 服务器上生成一套私有 Matrix (Synapse) 部署文件，放到 /tmp/opencode/mx-eval/stack/：docker-compose.yml、.env.example，再写一份 homeserver-notes.md 说明 homeserver.yaml 里必须改哪些配置。域名 mx.example.cn。要求 Postgres 用 C locale、Synapse 等数据库 healthy 再启动、镜像版本可以固定。不用真的启动。",
+      "expected_output": "生成 db+synapse+npm 的 compose 与 env 模板（C locale、healthcheck 依赖、版本可固定），并列出 homeserver.yaml 必改项（含媒体与 locale 相关项）",
+      "files": [],
+      "expectations": [
+        "Postgres 配置包含 --locale=C（或等价 C locale 初始化参数）",
+        "Synapse 通过 depends_on: condition: service_healthy 等待数据库就绪",
+        "Synapse 镜像版本可固定（环境变量或具体 tag，不是裸 latest）",
+        "Synapse 端口只绑定 127.0.0.1:8008（不对公网暴露）",
+        "homeserver-notes.md 提到 database 需加 allow_unsafe_locale: true",
+        "homeserver-notes.md 提到 enable_authenticated_media: false（或说明其对媒体下载的影响）",
+        ".env.example 包含 SYNAPSE_SERVER_NAME、POSTGRES_PASSWORD、NPM_PASSWORD 三类变量",
+        "docker-compose.yml 向 synapse 容器显式传递 POSTGRES_PASSWORD（homeserver.yaml 中 ${POSTGRES_PASSWORD} 替换依赖它）"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我们的 Synapse 部署后遇到一个怪问题：用户上传图片能成功并返回 MXC 地址，但下载时全部 404。检查发现媒体文件确实在磁盘上，数据库记录也正常，权限也没问题。Synapse 版本是 v1.154.0，这是怎么回事，怎么修？",
+      "expected_output": "定位为 v1.100+ 的 enable_authenticated_media 默认开启导致，给出设为 false 并重启的修复与验证方式",
+      "files": [],
+      "expectations": [
+        "根因解释指向 enable_authenticated_media 自 v1.120 起默认开启",
+        "修复方式为在 homeserver.yaml 设置 enable_authenticated_media: false 并重启 Synapse",
+        "解释 authenticated media 下旧下载接口 /_matrix/media/v3/download 会被拒绝（返回 404）",
+        "提到认证接口 /_matrix/client/v1/media/download（带 token）可正常下载，用于对比验证"
+      ]
+    }
+  ]
+}

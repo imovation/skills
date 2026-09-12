@@ -1,0 +1,54 @@
+# Synapse homeserver.yaml 必改/推荐片段
+# 生成初始配置后，把这些块合并进 /root/matrix/synapsedata/homeserver.yaml
+# 注意：server_name 安装后不可更改，见 SKILL.md §4
+
+public_baseurl: https://<你的域名>
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: ${POSTGRES_PASSWORD}   # 由容器环境变量替换，见 assets/docker-compose.yml
+    host: db
+    database: synapse
+    port: 5432
+    cp_min: 5
+    cp_max: 10
+  allow_unsafe_locale: true          # Postgres 非 C locale 时必需，否则报 IncorrectDatabaseSetup
+
+enable_authenticated_media: false    # v1.120 起默认 true；不改会出现"上传成功但下载 404"
+max_upload_size: 50M
+suppress_key_server_warning: true
+signing_key_path: "/data/<你的域名>.signing.key"
+
+enable_registration: false
+enable_registration_without_verification: false
+
+# 限速（部署初期放宽，稳定后调回默认）
+rc_message:
+  per_second: 100
+  burst_count: 500
+rc_login:
+  address:
+    per_second: 100
+    burst_count: 500
+  account:
+    per_second: 100
+    burst_count: 500
+rc_joins:
+  local:
+    per_second: 100
+    burst_count: 500
+  remote:
+    per_second: 100
+    burst_count: 500
+rc_invites:
+  per_room:
+    per_second: 100
+    burst_count: 500
+  per_user:
+    per_second: 100
+    burst_count: 500
+
+trusted_key_servers:
+  - server_name: "matrix.org"

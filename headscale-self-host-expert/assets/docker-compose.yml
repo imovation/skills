@@ -1,0 +1,32 @@
+services:
+  headscale:
+    image: headscale/headscale:v0.29.3   # 固定版本！latest 升级可能因破坏性配置变更导致服务起不来
+    container_name: headscale
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"     # 仅本机：NPM 走 Docker 内网，无需暴露公网
+      - "3478:3478/udp"           # STUN，必须映射且公网可达
+    volumes:
+      - ./data:/var/lib/headscale
+      - ./config:/etc/headscale
+    environment:
+      - TZ=Asia/Shanghai
+    command: serve
+    networks:
+      - headscale_db
+
+  headscale-ui:                   # Web 控制台（可选，不用可整段删除）
+    image: ghcr.io/munmunmiao/headscale-ui:0.1.2   # 固定版本（注意无 v 前缀）
+    container_name: headscale-ui
+    restart: unless-stopped
+    environment:
+      - BASE_PATH=/hsui/          # 与 NPM location 前缀一致
+    ports:
+      - "127.0.0.1:8120:80"       # 仅本机，经 NPM 对外
+    networks:
+      - headscale_db
+
+networks:
+  headscale_db:
+    name: headscale_default
+    external: true

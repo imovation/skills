@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: matrix-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: synapse
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请先在 .env 设置 POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    volumes:
+      - ./postgresdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+
+  synapse:
+    image: ${SYNAPSE_IMAGE:-matrixdotorg/synapse:v1.154.0}   # 版本在 .env 中固定
+    container_name: matrix-synapse
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8008:8008"
+    volumes:
+      - ./synapsedata:/data
+    environment:
+      SYNAPSE_SERVER_NAME: ${SYNAPSE_SERVER_NAME}
+      SYNAPSE_REPORT_STATS: "no"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}   # homeserver.yaml 里的 ${POSTGRES_PASSWORD} 替换依赖它
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 1g
+
+  npm:
+    image: ${NPM_IMAGE:-jc21/nginx-proxy-manager:latest}   # 上线后建议在 .env 里固定实际版本
+    container_name: matrix-npm
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    environment:
+      INITIAL_ADMIN_EMAIL: admin@${SYNAPSE_SERVER_NAME}
+      INITIAL_ADMIN_PASSWORD: ${NPM_PASSWORD}
+    volumes:
+      - ./npmdata:/data
+      - ./npmletsencrypt:/etc/letsencrypt
+    depends_on:
+      - synapse
+    mem_limit: 256m
+
+networks:
+  default:
+    name: matrix_default   # 固定网络名，TURN 容器按此名加入（见 references/turn.md）

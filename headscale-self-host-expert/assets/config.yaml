@@ -1,0 +1,45 @@
+# Headscale v0.29.x 可用配置模板
+# 使用前把 <你的域名> 替换为真实域名；字段说明见行内注释
+server_url: https://<你的域名>
+listen_addr: 0.0.0.0:8080
+
+# 客户端地址池（v0.29 起用 prefixes，旧的 ip_prefixes 列表已废弃）
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+
+# Tailscale v2 协议必需，用 generate private-key 生成
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+log_level: info
+
+dns:
+  base_domain: tailnet.<你的域名>     # 勿用 example.com 占位符
+  override_local_dns: false          # 拆分 DNS，避免 DNS 死锁（见 references/dns-magicdns.md）
+  nameservers:
+    global:
+      - 1.1.1.1
+      - 8.8.8.8
+
+policy:
+  mode: database                     # 允许 API/Web UI 管理 ACL
+
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: "headscale"
+    region_name: "Headscale Embedded DERP"
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    verify_clients: true
+  urls: []                           # 国内环境不要填官方 DERP map
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 24h

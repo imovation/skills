@@ -1,0 +1,36 @@
+{
+  "skill_name": "headscale-self-host-expert",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我要在阿里云的一台 Ubuntu 24.04 服务器上搭 headscale（用已有的 NPM 反代，容器名叫 npm-app），域名 hs.example.cn。帮我把部署文件生成到 /tmp/opencode/hs-eval/deploy/：docker-compose.yml、config/config.yaml，再写一份从生成密钥到启动的部署清单 deploy-notes.md。不要真的启动容器，这是预演。",
+      "expected_output": "生成可直接使用的 compose 与 config 模板（固定版本、端口收敛、自建 DERP 开启），以及含密钥生成/NPM 配置/启动验证的部署清单",
+      "files": [],
+      "expectations": [
+        "docker-compose.yml 使用固定版本镜像 headscale/headscale:v0.29.3（不是 latest）",
+        "compose 中 8080 端口绑定 127.0.0.1，未暴露公网",
+        "compose 映射 3478/udp 端口",
+        "config.yaml 包含 noise.private_key_path",
+        "config.yaml 使用 prefixes 的 v4/v6 格式（不是已废弃的 ip_prefixes 列表）",
+        "config.yaml 启用 derp.server.enabled 且 stun_listen_addr 为 0.0.0.0:3478",
+        "config.yaml 中 dns.override_local_dns 为 false",
+        "deploy-notes.md 包含生成 noise 私钥与 derp 私钥的步骤（用与 compose 相同的版本 tag）",
+        "deploy-notes.md 包含 configtest 验证步骤",
+        "部署说明提到 NPM 代理必须 http2_support: false 且 allow_websocket_upgrade: true"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我们一台通过 RDP 使用的 Windows 10 机器，tailscale status 一直显示 unexpected state: NoState，tailscale ip 也没有地址；服务端 headscale 日志显示这个节点连上 11~16 秒后就断开，如此反复。接入命令用的是 tailscale up --login-server=https://hs.example.cn --authkey=xxx。请问到底哪里出了问题，具体怎么修？",
+      "expected_output": "指出根因是 Windows 会话管理断开 Tailscale，给出 UnattendedMode=always 注册表 + 停止/启动服务 + 带 --unattended 重新 up 的完整修复步骤",
+      "files": [],
+      "expectations": [
+        "指出根因是 Windows 会话管理（RDP/控制台切换）会断开 Tailscale",
+        "给出注册表设置 UnattendedMode 为 always 的具体命令/路径",
+        "要求停止并重新启动 Tailscale 服务（Stop-Service/Start-Service）",
+        "指出重新 tailscale up 时必须显式带上 --unattended 参数",
+        "包含修复后的验证方式（如 tailscale status / tailscale ip）"
+      ]
+    }
+  ]
+}
