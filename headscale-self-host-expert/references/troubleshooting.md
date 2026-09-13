@@ -19,6 +19,17 @@
 | `no IPv4 or IPv6 prefix configured` | `ip_prefixes` 列表格式已废弃 | 改为 `prefixes: {v4: ..., v6: ...}` |
 | `dns.base_domain must be set when using MagicDNS` | MagicDNS 需要域名后缀 | 补 `dns.base_domain` |
 | 监听地址为空 / 服务不响应 | `listen_port` 已废弃 | 改为 `listen_addr: 0.0.0.0:8080` |
+| NPM `/api` 全部 502 且 backend 未监听 3000（日志停在 Fetching IP ranges） | 国内抓取 aws/cloudflare IP 段超时阻塞启动 | NPM extra_hosts 指向 127.0.0.1（npm-deploy-china.md §2.2） |
+| NPM 登录 `Invalid email or password`（从未创建过账号） | 新版 NPM 不再自动建默认 admin | 设 `INITIAL_ADMIN_EMAIL/PASSWORD` 或走 Setup 向导 |
+| certbot: `Server requires external account binding` | 目标 CA 要求 EAB | 先 `certbot register --eab-kid/--eab-hmac-key`（certificates.md） |
+| configtest: `parsing private key: key hex string doesn't have expected type prefix privkey:` | 手写密钥文件缺前缀 | 文件内容须为 `privkey:<hex>`（generate 输出到 stdout） |
+| UI 控制台 `/api/v1/policy` 报 500 | 未设置 ACL 策略时接口报错 | 写入 `{}`（=全放行，与未设置等价，acl.md §1） |
+| 普通 ping 节点不通，但 `tailscale ping` 通 | 目标机 OS 防火墙拦 ICMP（正常） | 无需修复；如需 ICMP/RDP 放行见下节 |
+| Windows RDP 连不上 | 目标机防火墙未放行 3389 | 放行 3389 且源限 100.64.0.0/10（见下节） |
+| `docker pull` 超时 | Docker Hub 被墙 | daemon.json 配 registry-mirrors（npm-deploy-china.md §0） |
+| `gpg: cannot open '/dev/tty'` | 非交互环境 gpg 需要 `--batch` | `gpg --batch --yes --dearmor` |
+| `direct connection not established` | 双方 NAT 无法打洞 | 正常，走 DERP 中继（延迟通常可接受） |
+| headscale-ui 刷新闪过 `alice-laptop` 等演示数据 | UI 内置 mock 数据做初始状态 | 无害，等待上游修复；真实数据随后替换 |
 
 ## DERP 中继没有生效
 
@@ -57,3 +68,35 @@ Get-Content 'C:\ProgramData\Tailscale\logs\tailscaled.log' -Tail 100
 ```
 
 先看服务端「节点是否在反复 connected/disconnected」，再决定查客户端还是网络链路，能少走很多弯路。
+
+## 客户端接入类报错（tailscale up）
+
+```text
+flag provided but not defined: -unattended
+→ Linux/macOS 没有该参数（Windows 专属）；Linux 用法：
+  sudo tailscale up --login-server=https://<域名> --authkey=<key>
+
+can't change --login-server without --force-reauth
+→ 切换控制面必须加 --force-reauth
+
+Access denied: checkprefs access denied
+→ 需要 root；或先执行 sudo tailscale set --operator=$USER 后免 sudo
+
+changing settings via 'tailscale up' requires mentioning all non-default flags
+→ 按提示补全非默认参数，或加 --reset 重置后重来
+```
+
+## ICMP 与 RDP（Windows 目标机）
+
+- `tailscale ping` 由 tailscaled 直接应答（不进目标机协议栈），它通 ≠ 普通 ping 通；
+  后者被 Windows 防火墙默认拦截属**正常现象**，不是故障。
+- 放行 ICMP：`Enable-NetFirewallRule -Name FPS-ICMP4-ERQ-In`
+- 放行 RDP（最小暴露，仅 tailnet 源）：
+
+  ```powershell
+  New-NetFirewallRule -DisplayName "Allow RDP from Tailscale" -Direction Inbound `
+    -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow
+  ```
+
+- 排查顺序：`tailscale ping` → 目标端口可达性（`nc -zv <ip> <port>`）→ 目标机防火墙规则
+  → 是否开了 ShieldsUp（`tailscale debug prefs | findstr /i shield`，true 则所有入站被丢）。

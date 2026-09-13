@@ -1,0 +1,36 @@
+# Nginx Proxy Manager（国内环境）部署模板
+# 使用前替换 <...> 占位符；详细说明见 references/npm-deploy-china.md
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    environment:
+      # 新版 NPM 不再自动创建默认管理员，用以下两个变量预置（首次启动生效）
+      - INITIAL_ADMIN_EMAIL=<你的邮箱>
+      - INITIAL_ADMIN_PASSWORD=<强密码>
+      # 国内 LE 不可达时走 ZeroSSL；签发前需 docker exec npm certbot register 预注册 EAB
+      # （见 references/certificates.md；不需要可删除本行）
+      - LE_SERVER=https://acme.zerossl.com/v2/DV90
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"          # ⚠️ 云安全组不要放行 81，仅用 SSH 隧道访问
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+    extra_hosts:
+      # 阻断 IP ranges 抓取，避免 backend 启动卡死（国内 aws/cloudflare 域名超时）
+      - "ip-ranges.amazonaws.com:127.0.0.1"
+      - "www.cloudflare.com:127.0.0.1"
+      - "ip-ranges.atlassian.com:127.0.0.1"
+      - "api.github.com:127.0.0.1"
+    networks:
+      - headscale_db
+
+networks:
+  headscale_db:
+    name: headscale_default
+    external: true
+    # 若网络不存在：先执行 docker network create headscale_default
+    # （headscale 的 compose 也声明了这个 external 网络，两者借此互通）

@@ -30,9 +30,11 @@ description: 简短描述触发场景
 | `deep-cure/` | 深度诊断与根治方法论 |
 | `docx-to-md/` | Word (.docx) 转 Markdown |
 | `headscale-self-host-expert/` | Headscale 自托管 VPN 部署 |
+| `llm-proxy-expert/` | 国内服务器 LLM 代理与订阅同步 |
 | `matrix-self-host-expert/` | Matrix (Synapse) 自建部署 |
 | `md-to-docx/` | Markdown 转 Word (.docx) |
 | `openclaw-matrix-acp-dedupe/` | OpenClaw Matrix ACP 重复回复修复 |
+| `opencode-antigravity/` | OpenCode Antigravity 认证插件运维 |
 | `opencode-model-manager/` | OpenCode LLM 模型管理与切换 |
 | `rdp-manager/` | Ubuntu 远程桌面管理（xrdp/内置） |
 

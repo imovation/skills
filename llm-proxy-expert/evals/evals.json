@@ -1,0 +1,47 @@
+{
+  "skill_name": "llm-proxy-expert",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "阿里云广州那台 Ubuntu 服务器（root@8.163.115.124，装了 pi 和 opencode，都是 npm 全局装）最近两个 agent 调大模型都好慢，经常请求超时。opencode 日志里一堆 Provider response headers timed out after 300000ms。我本机这台有 clash（7897）。帮我排查并解决，尽量在服务器上一次性部署好代理并验证 pi 和 opencode 都能正常回复。",
+      "expected_output": "先定位根因（服务器出网被阻断，无法直连 opencode.ai），再在服务器部署绑定 127.0.0.1 的 mihomo 代理并配置环境变量，最后冒烟验证 pi 与 opencode 正常回复",
+      "files": [],
+      "expectations": [
+        "先读取/复现真实错误，确认端点是 https://opencode.ai/zen/go/v1（opencode-go）而不是乱猜",
+        "用 curl -4 + /dev/tcp 判断服务器出网被阻断，并用本机 clash 对照验证（走代理秒通、直连 code=000）",
+        "在服务器部署 mihomo：只绑 127.0.0.1、mixed-port 本地端口、external-controller 127.0.0.1、allow-lan 不开启",
+        "系统服务以 systemctl enable --now 托管并验证监听端口",
+        "用 curl -x 走代理验证 opencode.ai 返回 200 再接入 agent",
+        "配置 HTTP_PROXY/HTTPS_PROXY/NO_PROXY（NO_PROXY 含阿里云元数据 100.100.100.200），覆盖 /etc/profile.d 与 /etc/environment",
+        "冒烟验证 pi -p -nt 与 opencode run 都能得到模型回复",
+        "不会把机场订阅链接/token 明文写进配置或脚本（应存 600 权限的文件运行时读取）"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "服务器在阿里云上海，只有 opencode 在跑，报错 Cannot connect to API: The socket connection was closed unexpectedly。我本机没装 clash。请问这是哪一类问题，该往哪个方向排查？我不想在不确认根因前乱装东西。",
+      "expected_output": "判断为出网连通性问题（TLS 握手被 reset，SNI 级阻断典型表现），给出先做连通性矩阵与 TCP 直测的证据化排查方向，而不是直接让装代理",
+      "files": [],
+      "expectations": [
+        "指出 socket closed unexpectedly 是 TLS 握手被重置/上游连接中途断掉，属于网络连通性问题而非配置问题",
+        "先做 curl -4 连通性矩阵与 timeout /dev/tcp 直测获取证据，不直接要求装代理",
+        "说明本机无 clash 时可用别的对照方式（如其它可联网机器、或先确认机场节点可到达）",
+        "不写死具体的订阅 token 或密码"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "服务器上 mihomo 代理我已经按第一次方案装好并验证 pi/opencode 都能用了。但听说机场会轮换节点，想做一个每天自动更新的机制。注意：从服务器自己拉订阅（机场订阅站域名）是被 TLS 阻断的，requests 直连和走代理都失败，只有我本机拉得下来。",
+      "expected_output": "设计并落地'本机 cron 拉订阅 → 归一化改写 → scp 到服务器 → 重启 mihomo → 验证'的自动同步链路，SSH 免密、订阅 URL 存 600 权限文件",
+      "files": [],
+      "expectations": [
+        "明确采用本机拉取推送的方案，因为服务器侧拉订阅被 TLS 阻断（机场对云 IP 阻断）",
+        "用专门生成的 SSH 免密密钥做传输，不用密码写进 cron",
+        "订阅 URL（含 token）存权限 600 的文件，脚本运行时读取，不写死明文",
+        "每次更新后必须重新做归一化改写（mixed-port/external-controller/secret/dns.listen 被订阅覆写后要刷回）",
+        "更新后重启 mihomo 并验证 opencode.ai 走代理返回 200",
+        "配置本机 cron（凌晨执行）"
+      ]
+    }
+  ]
+}

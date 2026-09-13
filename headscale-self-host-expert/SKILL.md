@@ -29,7 +29,9 @@ dig +short <你的域名>
 ```
 
 > **必须使用 HTTPS 域名接入客户端**。Tailscale 客户端默认拒绝明文 HTTP 控制面。
-> 已有服务器跑着 Nginx Proxy Manager (NPM) 时直接复用，不要重复部署反代。
+> 已有服务器跑着 Nginx Proxy Manager (NPM) 时直接复用，不要重复部署反代；
+> **没有 NPM 时**按 `references/npm-deploy-china.md` 从零部署（模板与国内三坑已备）。
+> 证书签发策略（国内 LE 被墙、ZeroSSL 免网页 EAB）见 `references/certificates.md`。
 
 ### 端口全景
 | 端口 | 用途 | 云安全组 | 说明 |
@@ -37,7 +39,7 @@ dig +short <你的域名>
 | 443 | HTTPS 控制面 + DERP 中继 + Web UI | ✅ 放行 | NPM 统一入口，DERP 靠 WebSocket 升级 |
 | 3478/udp | STUN（NAT 探测） | ✅ 放行 | 自建 DERP 必需，不放过 netcheck 会异常 |
 | 8080 | Headscale 内部 HTTP | ❌ 不放行 | NPM 通过 Docker 内网访问即可 |
-| 81 | NPM 管理面板 | 限制来源 IP | 默认管理员见容器环境变量 |
+| 81 | NPM 管理面板 | ❌ 不放行 | 仅 SSH 隧道访问（`ssh -L 8181:127.0.0.1:81`）；管理员初始化见 npm-deploy-china.md |
 
 ---
 
@@ -82,6 +84,10 @@ docker run --rm -v /opt/headscale/data:/var/lib/headscale \
 
 > 错误写法：`docker run ... headscale/headscale:$HS_VERSION headscale generate ...`
 > 会报 `unknown command "headscale" for "headscale"`。
+>
+> 实测补充：部分镜像版本的 `generate private-key --output <path>` 只把密钥打印到 stdout（`privkey:<hex>`）
+> 而不落盘。若 `configtest` 报 `parsing private key: key hex string doesn't have expected type prefix privkey:`，
+> 即手写密钥文件缺前缀——文件内容应为 `privkey:<hex>`，权限 600。
 
 ### 1.3 配置验证与启动
 
@@ -115,6 +121,9 @@ docker logs headscale 2>&1 | tail -20
 ## 3. NPM 反向代理（HTTPS 关键配置）
 
 ### 3.1 网络互通
+
+> 服务器**没有 NPM** 时先按 `references/npm-deploy-china.md` 从零部署（含默认管理员、
+> IP ranges 卡死等国内坑与 `assets/npm-compose.yml` 模板）；证书签发链路见 `references/certificates.md`。
 
 让 NPM 容器加入 headscale 网络，之后可用容器名直连：
 
@@ -214,6 +223,12 @@ docker exec headscale headscale nodes list
 ### 通用命令
 
 ```bash
+# Linux / macOS（没有 --unattended，那是 Windows 专属参数）
+sudo tailscale up --login-server=https://<你的域名> --authkey=<preauthkey>
+# 切换过 login-server 时须加 --force-reauth
+# Linux 免 sudo 管理：sudo tailscale set --operator=$USER
+
+# Windows（推荐配合无人值守模式，见下节）
 tailscale up --login-server=https://<你的域名> --authkey=<preauthkey> --unattended
 ```
 
@@ -258,6 +273,18 @@ tailscale ip
 > 若报 `changing settings via 'tailscale up' requires mentioning all non-default flags`，
 > 按提示补全 flags 或用 `--reset` 重置后重来。
 
+### Windows 远程桌面（RDP）接入
+
+目标机放行 3389（最小暴露，仅 tailnet 源），之后 `mstsc /v:<100.64.x.x>` 即可：
+
+```powershell
+New-NetFirewallRule -DisplayName "Allow RDP from Tailscale" -Direction Inbound `
+  -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow
+```
+
+> 普通 ICMP ping 不通**不等于**故障：Windows 防火墙默认拦截，而 `tailscale ping` 由 tailscaled
+> 直接应答（不进系统协议栈）。排查顺序与放行命令见 `references/troubleshooting.md`「ICMP 与 RDP」。
+
 ### 验证命令速查
 
 | 命令 | 用途 |
@@ -279,6 +306,9 @@ tailscale ip
 | 客户端注册成功但 11~16 秒断线反复 | Windows 会话管理断开 | 按 §6 NoState 修复 |
 | 节点在线但 `tx 有值 rx=0` | 对端没连上 DERP 中继 | 检查对端 netcheck / 安全组 3478/udp |
 | 节点间完全不通 | ACL 未命中（注意空策略=全放行） | 见 `references/acl.md` |
+| `tailscale ping` 通但普通 ping 不通 | 目标机系统防火墙拦 ICMP（正常） | 无需修复；RDP/ICMP 放行见 troubleshooting |
+| UI/API `/api/v1/policy` 报 500 | 未设置 ACL 策略 | 写入 `{}`（=全放行；`{"grants":[]}` 才是拒绝一切） |
+| NPM `/api` 全 502（backend 未就绪） | IP ranges 抓取卡死 | 见 `references/npm-deploy-china.md` §2.2 |
 | `initial DERPMap is empty` | 无任何 DERP 来源 | 启用 §4 自建 DERP |
 | DNS 解析超时 / 死锁 | `override_local_dns` 接管系统 DNS | 见 `references/dns-magicdns.md` |
 
@@ -337,13 +367,14 @@ docker exec headscale headscale nodes list
 
 ### 7.4 安全清单
 
-- [ ] `server_url` 使用 HTTPS，证书自动续期正常
-- [ ] NPM 管理端口 81 不暴露公网（加固方案见 `references/npm-reverse-proxy.md`）
+- [ ] `server_url` 使用 HTTPS，证书自动续期正常（国内优先 ZeroSSL，见 `references/certificates.md`）
+- [ ] NPM 管理端口 81 不暴露公网（安全组不放行 + SSH 隧道，见 `references/npm-deploy-china.md` §3）
 - [ ] 容器端口绑定收紧（模板已做：`127.0.0.1:8080:8080`，NPM 走 Docker 内网）
 - [ ] API Key 设置有限有效期并定期轮换
 - [ ] 定期备份 `noise_private.key` + `db.sqlite`（见 §7.2）
-- [ ] ACL 按最小权限原则收紧（不要长期全放行，方法见 `references/acl.md`）
-- [ ] 客户端使用 `--unattended` + preauthkey 接入，避免依赖 GUI 会话
+- [ ] ACL 按最小权限原则收紧（不要长期全放行，方法见 `references/acl.md`；
+      注意 `{}`=全放行、`{"grants":[]}`=拒绝一切，收紧时先给自己留兜底规则）
+- [ ] 客户端使用 `--unattended`（Windows）+ preauthkey 接入，避免依赖 GUI 会话
 
 ---
 
@@ -353,8 +384,11 @@ docker exec headscale headscale nodes list
 |------|--------|
 | `assets/docker-compose.yml` | 部署时直接复制（固定版本 headscale + 可选 headscale-ui） |
 | `assets/config.yaml` | 部署时直接复制（v0.29 完整可用模板，含注释） |
+| `assets/npm-compose.yml` | 服务器没有 NPM 时从零部署（国内坑已内置） |
 | `scripts/backup.sh` | 配置定时备份（§7.2） |
 | `references/troubleshooting.md` | 完整故障表 + 诊断采集顺序 + DERP 链路细节 |
+| `references/certificates.md` | 证书策略：LE 被墙、ZeroSSL 免网页 EAB、NPM 集成续期 |
+| `references/npm-deploy-china.md` | NPM 全新部署：默认管理员、IP ranges 卡死、81 加固 |
 | `references/dns-magicdns.md` | DNS 死锁 / MagicDNS 配置 |
 | `references/acl.md` | ACL/grants 策略语法与最小权限示例 |
-| `references/npm-reverse-proxy.md` | NPM API 完整调用、headscale-ui 子路径、81 端口加固 |
+| `references/npm-reverse-proxy.md` | NPM API 完整调用、headscale-ui 子路径 |
