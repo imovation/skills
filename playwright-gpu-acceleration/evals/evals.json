@@ -1,0 +1,36 @@
+{
+  "note": "触发评测集。正例 = 应触发本 Skill；反例 = 不应触发（选取的是「tricky」负例：与 Playwright/测试/性能沾边但属于其他领域）。",
+  "queries": [
+    { "query": "Playwright 的 e2e 测试太慢了，一个 spec 要跑一个半小时，有什么办法加速？", "should_trigger": true },
+    { "query": "跑测试的时候笔记本风扇一直狂转，CPU 占用 100%，但我什么都没开", "should_trigger": true },
+    { "query": "e2e 跑的时候 CPU 一直满载，能让测试跑在 GPU 上吗", "should_trigger": true },
+    { "query": "明明电脑有 RTX 独立显卡，为什么 headless Chrome 还是用 SwiftShader 软件渲染", "should_trigger": true },
+    { "query": "chrome-headless-shell 是什么？为什么 Playwright 默认用这个", "should_trigger": true },
+    { "query": "截图基线对不上，changed pixel ratio 0.18 超过了 0.05 的阈值", "should_trigger": true },
+    { "query": "toHaveScreenshot 一直 fail，是像素比对太严格了吗", "should_trigger": true },
+    { "query": "Three.js 场景在 E2E 里渲染特别卡，一帧要几十秒", "should_trigger": true },
+    { "query": "帮我给 Playwright 打开硬件加速", "should_trigger": true },
+    { "query": "WebGL 在无头浏览器里能不能用 GPU 加速", "should_trigger": true },
+    { "query": "--in-process-gpu 是什么意思，有什么风险", "should_trigger": true },
+    { "query": "为什么我加了 channel: 'chromium' 之后还是软件渲染", "should_trigger": true },
+    { "query": "SwiftShader 占了太多 CPU 资源", "should_trigger": true },
+    { "query": "e2e 测试跑完风扇还是很热，正常吗", "should_trigger": true },
+    { "query": "像素级回归测试总是 flaky，截图有随机差异", "should_trigger": true },
+    { "query": "use-angle=vulkan 报错 device memory allocation failed", "should_trigger": true },
+    { "query": "Playwright 跑测试的时候 GPU 进程崩溃了", "should_trigger": true },
+    { "query": "我的截图基线里混进了动态时钟，怎么排除", "should_trigger": true },
+    { "query": "Puppeteer 和 Playwright 哪个更适合做 WebGL 场景的自动化测试", "should_trigger": true },
+
+    { "query": "帮我写一个 FastAPI 接口返回用户列表", "should_trigger": false },
+    { "query": "React 组件渲染出来是空白，控制台没有报错，怎么排查", "should_trigger": false },
+    { "query": "PostgreSQL 查询很慢，加了索引还是慢，怎么优化", "should_trigger": false },
+    { "query": "帮我配置 nginx 反向代理", "should_trigger": false },
+    { "query": "docker compose 起不来，报错找不到镜像", "should_trigger": false },
+    { "query": "用 Playwright 帮我抓取一个网站的商品价格", "should_trigger": false },
+    { "query": "单元测试覆盖率怎么提升", "should_trigger": false },
+    { "query": "TypeScript 类型报错，怎么让 tsc 通过", "should_trigger": false },
+    { "query": "帮我写一个 Chrome 扩展", "should_trigger": false },
+    { "query": "Linux 磁盘空间满了怎么清理", "should_trigger": false },
+    { "query": "把 CSV 转成 Excel", "should_trigger": false }
+  ]
+}

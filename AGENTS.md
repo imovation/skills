@@ -36,6 +36,7 @@ description: 简短描述触发场景
 | `openclaw-matrix-acp-dedupe/` | OpenClaw Matrix ACP 重复回复修复 |
 | `opencode-antigravity/` | OpenCode Antigravity 认证插件运维 |
 | `opencode-model-manager/` | OpenCode LLM 模型管理与切换 |
+| `playwright-gpu-acceleration/` | Playwright E2E 硬件加速诊断（软件渲染回退、像素基线失配归因） |
 | `rdp-manager/` | Ubuntu 远程桌面管理（xrdp/内置） |
 
 ## 注意事项
