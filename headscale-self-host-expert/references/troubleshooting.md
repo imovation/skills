@@ -25,6 +25,7 @@
 | configtest: `parsing private key: key hex string doesn't have expected type prefix privkey:` | 手写密钥文件缺前缀 | 文件内容须为 `privkey:<hex>`（generate 输出到 stdout） |
 | UI 控制台 `/api/v1/policy` 报 500 | 未设置 ACL 策略时接口报错 | 写入 `{}`（=全放行，与未设置等价，acl.md §1） |
 | 普通 ping 节点不通，但 `tailscale ping` 通 | 目标机 OS 防火墙拦 ICMP（正常） | 无需修复；如需 ICMP/RDP 放行见下节 |
+| `tailscale ping`(disco) 通但普通数据（ICMP/TCP）不通（多见于新接入设备对仅中继节点） | 客户端数据路径未收敛（端点重协商期） | 等重协商或重启源端 Tailscale；到对端查防火墙日志确认包是否到达（见文末小节） |
 | Windows RDP 连不上 | 目标机防火墙未放行 3389 | 放行 3389 且源限 100.64.0.0/10（见下节） |
 | `docker pull` 超时 | Docker Hub 被墙 | daemon.json 配 registry-mirrors（npm-deploy-china.md §0） |
 | `gpg: cannot open '/dev/tty'` | 非交互环境 gpg 需要 `--batch` | `gpg --batch --yes --dearmor` |
@@ -64,6 +65,8 @@ docker exec headscale headscale nodes list
 tailscale netcheck
 tailscale status
 tailscale debug derp-map
+tailscale debug netmap                        # 含 PacketFilter / 各 peer Endpoints
+tailscale debug peer-endpoint-changes <对端IP>  # 观察某对端端点重协商历史
 Get-Content 'C:\ProgramData\Tailscale\logs\tailscaled.log' -Tail 100
 ```
 
@@ -100,3 +103,33 @@ changing settings via 'tailscale up' requires mentioning all non-default flags
 
 - 排查顺序：`tailscale ping` → 目标端口可达性（`nc -zv <ip> <port>`）→ 目标机防火墙规则
   → 是否开了 ShieldsUp（`tailscale debug prefs | findstr /i shield`，true 则所有入站被丢）。
+
+## `tailscale ping` 通但数据（ICMP/TCP）不通
+
+典型形态：某节点（常见于**刚接入的新设备**）访问"只能走 DERP 中继"的对端失败，
+但两端 `tailscale ping` 正常——disco 探测由 tailscaled 直接应答，**不代表数据面可用**。
+
+排查顺序：
+
+1. 两端 `tailscale ping <对端>` 确认 disco 通；`netcheck` 确认 UDP/DERP 正常。
+2. **判定包是否真的到达对端**（最关键的一步）：
+   - Windows 对端：开防火墙日志后读取（放行/拦截都会记录；无记录=包未到达）：
+
+     ```powershell
+     Set-NetFirewallProfile -All -LogAllowed True -LogBlocked True
+     # 复现问题后：
+     Select-String "<源IP>" "$env:windir\system32\LogFiles\Firewall\pfirewall.log" | Select-Object -Last 20
+     ```
+
+   - 需要更强证据时抓包：Windows Server 用 `netsh trace start capture=yes tracefile=C:\Temp\cap.etl`，
+     复现后 `netsh trace stop`，再 `netsh trace convert C:\Temp\cap.etl dump=C:\Temp\cap.txt` 检索源 IP。
+     ⚠️ 旧版 pktmon（仅支持 `-c/-d` 参数）没有 `--capture`，别用。
+3. Windows 客户端侧查路径状态：
+   - `tailscale debug netmap`：确认 `PacketFilter` 为全放行（策略 `{}` 时），并查看该对端 `Endpoints`
+     （UPnP/虚拟网卡产生的不可达端点属常见噪音）。
+   - `tailscale debug peer-endpoint-changes <对端IP>`：观察端点是否在持续重协商。
+4. 处置：多数情况下端点重协商完成后自愈（实测约 40 分钟）；未愈则 Windows 客户端
+   `Restart-Service Tailscale`；仍不通再考虑 `tailscale up --reset` 重新注册。
+
+实测案例（2026-09）：新接入的 Windows 节点对"仅中继"节点数据不通（ICMP/TCP 全超时），disco 正常；
+期间对端防火墙日志无任何记录，端点重协商自愈后立即出现 `ALLOW` 记录——两端防火墙/包过滤/ACL 均无问题。

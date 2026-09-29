@@ -307,6 +307,7 @@ New-NetFirewallRule -DisplayName "Allow RDP from Tailscale" -Direction Inbound `
 | 节点在线但 `tx 有值 rx=0` | 对端没连上 DERP 中继 | 检查对端 netcheck / 安全组 3478/udp |
 | 节点间完全不通 | ACL 未命中（注意空策略=全放行） | 见 `references/acl.md` |
 | `tailscale ping` 通但普通 ping 不通 | 目标机系统防火墙拦 ICMP（正常） | 无需修复；RDP/ICMP 放行见 troubleshooting |
+| `tailscale ping` 通但数据（ICMP/TCP）不通（个别节点，尤其新接入对仅中继对端） | 客户端数据路径未收敛 | 等端点重协商或重启源端；见 troubleshooting「disco 通但数据不通」 |
 | UI/API `/api/v1/policy` 报 500 | 未设置 ACL 策略 | 写入 `{}`（=全放行；`{"grants":[]}` 才是拒绝一切） |
 | NPM `/api` 全 502（backend 未就绪） | IP ranges 抓取卡死 | 见 `references/npm-deploy-china.md` §2.2 |
 | `initial DERPMap is empty` | 无任何 DERP 来源 | 启用 §4 自建 DERP |

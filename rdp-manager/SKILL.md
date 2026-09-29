@@ -31,7 +31,8 @@ description: 万能远程桌面管理工具。当用户提到远程连接断开�
 
 ## 故障修复 (Troubleshooting)
 1. **剪贴板同步失效**：
-   - 运行：`pgrep -f rdp-clipboard-bridge.py > /dev/null || python3 ~/agent-skill-factory/projects/ubuntu-tutor/assets/rdp-clipboard-bridge.py &`。
+   - 运行：`pgrep -f scripts/rdp_bridge.py > /dev/null || nohup python3 scripts/rdp_bridge.py >/tmp/rdp_bridge.log 2>&1 &`。
+   - 说明：桥接脚本为技能自带的 `scripts/rdp_bridge.py`，登录时由 `~/.config/autostart/rdp-clipboard-bridge.desktop` 自动拉起；负责把 RDP 客户端带来的 `image/bmp` 和文件路径（`text/uri-list`）转换为 `image/png`，修复图片/文件粘贴失效（opencode TUI 等只认 `image/png`）。
 2. **黑屏问题**：
    - 检查并修改 `/etc/xrdp/startwm.sh`，确保开头包含：
      ```bash
