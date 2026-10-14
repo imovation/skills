@@ -182,7 +182,10 @@ def bmp_to_png(raw_data):
     except:
         return None
 
-last_hash = ""
+last_bmp_hash = None    # 已经转换并发布过的 image/bmp 内容哈希（防止重复转换/重复抢占）
+last_png = None         # 最近一次发布的 PNG 原始数据（剪贴板属主失效后用于自愈）
+last_png_hash = None    # 最近一次发布的 PNG 哈希（场景 B 去抖）
+
 display, xauthority = detect_display()
 apply_display(display, xauthority)
 print(f"RDP Clipboard Bridge 已启动 (DISPLAY={display}, "
@@ -198,32 +201,54 @@ while True:
                                         stderr=subprocess.DEVNULL, timeout=10).decode('utf-8').splitlines()
         consecutive_failures = 0
 
+        # 自愈：剪贴板没有任何属主（xclip 进程被杀 / 属主异常退出）时，
+        # opencode 的原生读取会一直等不到 ConvertSelection 回应而报
+        # "Clipboard read timed out"。这里把上一张图重新发布回去。
+        if not targets:
+            if last_png is not None:
+                if set_clipboard_data('image/png', last_png):
+                    print(f"[Bridge] 剪贴板属主已失效，已重新发布 image/png "
+                          f"({len(last_png)} 字节)", flush=True)
+                else:
+                    log_throttled("republish", "[Bridge] 重新发布 image/png 失败")
+            time.sleep(1)
+            continue
+
         # 场景 A: RDP 客户端复制的图片 (image/bmp) -> image/png（opencode TUI 等只认 png）
         if 'image/png' not in targets and 'image/bmp' in targets:
             raw_data = get_clipboard_data('image/bmp')
             if raw_data:
-                current_hash = hashlib.md5(raw_data).hexdigest()
-                if current_hash != last_hash:
+                bmp_hash = hashlib.md5(raw_data).hexdigest()
+                # 同一张图只做一次昂贵的 BMP 解码，之后直接复用上次的结果。
+                # 注意：只要剪贴板还握在 RDP 手里（没有 image/png），就必须重新发布一次，
+                # 否则 opencode 读不到 png 会直接报 "X11 clipboard property transfer failed"。
+                png_data = last_png if bmp_hash == last_bmp_hash else None
+                if png_data is None:
                     png_data = bmp_to_png(raw_data)
-                    if png_data and set_clipboard_data('image/png', png_data):
+                if png_data and set_clipboard_data('image/png', png_data):
+                    if bmp_hash != last_bmp_hash:
                         print(f"[Bridge] 已转换 image/bmp -> image/png ({len(png_data)} 字节)", flush=True)
-                        last_hash = hashlib.md5(png_data).hexdigest()
+                    last_bmp_hash = bmp_hash
+                    last_png = png_data
+                    last_png_hash = hashlib.md5(png_data).hexdigest()
 
         # 场景 B: 发现图片数据 (截图)
         elif 'image/png' in targets:
             raw_data = get_clipboard_data('image/png')
             if raw_data:
-                current_hash = hashlib.md5(raw_data).hexdigest()
-                if current_hash != last_hash:
-                    set_clipboard_data('image/png', raw_data)
-                    last_hash = current_hash
+                png_hash = hashlib.md5(raw_data).hexdigest()
+                if png_hash != last_png_hash:
+                    if set_clipboard_data('image/png', raw_data):
+                        last_png = raw_data
+                        last_png_hash = png_hash
+                        last_bmp_hash = None   # 内容来源变了，下次重新判断
 
         # 场景 C: 发现文件路径 (复制文件)
         elif 'text/uri-list' in targets:
             uri_data = get_clipboard_data('text/uri-list')
             if uri_data:
                 current_hash = hashlib.md5(uri_data).hexdigest()
-                if current_hash != last_hash:
+                if current_hash != last_png_hash:
                     uri = uri_data.decode('utf-8').strip()
                     if uri.startswith('file://'):
                         path = urllib.parse.unquote(uri[7:])
@@ -231,8 +256,9 @@ while True:
                             with open(path, 'rb') as f:
                                 img_data = f.read()
                                 mime = 'image/png' if path.lower().endswith('.png') else 'image/jpeg'
-                                set_clipboard_data(mime, img_data)
-                                last_hash = current_hash
+                                if set_clipboard_data(mime, img_data):
+                                    last_png_hash = current_hash
+                                    last_bmp_hash = None
     except Exception as exc:
         # display 失效（注销、xrdp 重连、重启）时重新发现一次
         consecutive_failures += 1
