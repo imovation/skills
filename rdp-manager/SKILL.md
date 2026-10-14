@@ -31,8 +31,12 @@ description: 万能远程桌面管理工具。当用户提到远程连接断开�
 
 ## 故障修复 (Troubleshooting)
 1. **剪贴板同步失效**：
-   - 运行：`pgrep -f scripts/rdp_bridge.py > /dev/null || nohup python3 scripts/rdp_bridge.py >/tmp/rdp_bridge.log 2>&1 &`。
-   - 说明：桥接脚本为技能自带的 `scripts/rdp_bridge.py`，登录时由 `~/.config/autostart/rdp-clipboard-bridge.desktop` 自动拉起；负责把 RDP 客户端带来的 `image/bmp` 和文件路径（`text/uri-list`）转换为 `image/png`，修复图片/文件粘贴失效（opencode TUI 等只认 `image/png`）。
+   - 服务状态：`systemctl --user status rdp-clipboard-bridge.service`（开机自启、崩溃自动重启，不依赖终端进程）。
+   - 手动拉起：`systemctl --user restart rdp-clipboard-bridge.service`；日志：`journalctl --user -u rdp-clipboard-bridge -f`。
+   - 说明：桥接脚本为 `scripts/rdp_bridge.py`，以 systemd user service（`rdp-clipboard-bridge.service`）常驻；负责把 RDP 客户端带来的 `image/bmp` 和文件路径（`text/uri-list`）转换为 `image/png`，修复图片/文件粘贴失效（opencode TUI 等只认 `image/png`）。
+   - **桥接必须自己找到 X display**：本服务以 `systemd --user` 运行，进程环境里既没有 `DISPLAY` 也没有 `XAUTHORITY`。脚本会按权威性依次探测并**逐一验证连通性**：进程环境 → `systemctl --user show-environment` → `loginctl` 活跃会话的 `Display` → 本用户自己拥有的 `/tmp/.X11-unix/X*`（自动跳过 gdm 的 `:0` 和 GNOME 设置对话框）。display 失效（注销、xrdp 重连、重启）时连续失败 3 次会自动重新探测并打印切换日志。
+   - **启动日志必须确认这一行**：`journalctl --user -u rdp-clipboard-bridge | grep 已启动`，确认 `DISPLAY=` 是当前图形会话的 display（Wayland 会话通常是 `:1`，xrdp 通常是 `:10`），且 `XAUTHORITY` 非空。
+   - **粘贴图片失败时的判断依据**：opencode V2 的 TUI 只通过 `libopentui.so` 原生剪贴板读取，且**只接受 `image/png` 和 `text/plain`**；剪贴板上只有 `image/bmp` 时会直接报错 `X11 clipboard property transfer failed`。看到这个报错 = 桥接没生效，先查桥接日志而不是 opencode。
 2. **黑屏问题**：
    - 检查并修改 `/etc/xrdp/startwm.sh`，确保开头包含：
      ```bash

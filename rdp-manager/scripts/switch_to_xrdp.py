@@ -29,9 +29,7 @@ with open(xsession_path, "w") as f:
     f.write("gnome-session\n")
 
 print("[4/5] 正在后台启动剪贴板桥接服务...")
-run("pkill -f rdp_bridge.py")
-bridge_path = os.path.join(os.path.dirname(__file__), "rdp_bridge.py")
-subprocess.Popen(["python3", bridge_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["systemctl", "--user", "restart", "rdp-clipboard-bridge.service"])
 
 # --- 阶段 2: 关键临界点倒计时 ---
 print("\n" + "="*50)

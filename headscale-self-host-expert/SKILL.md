@@ -101,6 +101,28 @@ cd /opt/headscale && docker compose up -d
 docker logs headscale 2>&1 | tail -20
 ```
 
+### 1.4 规划跨网连通性（部署时就要定）
+
+Headscale 本身只是控制面，**数据面走不通不会影响接入**，但会在后续使用中表现为
+「远程桌面/跨网访问很卡」。这个决定要在接入客户端**之前**做完。
+
+| 场景 | 推荐 | 说明 |
+|------|------|------|
+| 客户端之间同局域网 | 直连（LAN） | 物理交换机直连，延迟最低，不需要任何配置 |
+| 跨网、且公网 IP 固定 | 手工端口映射 + 固定 tailscale 端口 | tailscale 自报端口与映射对不上时仍会失败，见 §4 陷阱 |
+| **跨网、公网 IP 动态**（国内家庭/办公宽带常态） | **优先让两端都支持 IPv6** | 绕过 NAT 穿透，且不受 IP 变动影响 |
+| 两端都只有 IPv4 且在硬 NAT 后 | 只能走 DERP 中继 | 降低 RDP 画质/关视频重定向等作为缓解 |
+
+**IPv6 是首选**：地址天然公网可达，不需要任何端口映射或 UPnP。
+国内运营商普遍已给 IPv6 前缀（电信给 `/56` 或 `/60`），在路由器 WAN 口启用即可。
+
+> 判定本机 IPv6 是否真的可用，**不要用 `ping -6`**——国内运营商普遍过滤/限速 ICMPv6
+> （实测 100% 丢包）。用 `curl -6 -s https://api64.ipify.org` 判断。
+> 通常会同时存在三类地址：路由器分配的稳定地址（DHCPv6，长期不变）、
+> mngtmpaddr（依赖 IA_NA，前缀重分配时变）、RFC 4941 隐私临时地址（按标准周期性轮换）。
+> tailscale 会把全部可用地址写入 netmap，实测**用隐私地址直连也通畅**，无需人工干预；
+> 只要前缀稳定就不必操心地址轮换。
+
 ---
 
 ## 2. 常见配置报错（v0.23 → v0.29 变迁）
@@ -293,7 +315,9 @@ New-NetFirewallRule -DisplayName "Allow RDP from Tailscale" -Direction Inbound `
 | `tailscale netcheck` | 确认 UDP / Nearest DERP |
 | `tailscale ping <对端IP>` | 验证节点互通（比 ICMP ping 准确） |
 | `tailscale debug derp-map` | 确认 DERP 地图只含自建 region |
-| `tailscale ping` 输出 `direct connection not established` | 正常：双方都在 NAT 后，走 DERP 中继即可 |
+| `tailscale debug netmap` | 看各 peer 的 `Endpoints`——判断能否直连的关键（见 §4 陷阱） |
+| `tailscale ping` 输出 `direct connection not established` | 仅传输小文件时可接受；**承载 RDP 时不可接受**，见 §4 |
+| `curl -6 -s https://api64.ipify.org` | 判定 IPv6 出向是否可用（**不要用 `ping -6`**，国内普遍过滤 ICMPv6） |
 
 ---
 
@@ -312,8 +336,27 @@ New-NetFirewallRule -DisplayName "Allow RDP from Tailscale" -Direction Inbound `
 | NPM `/api` 全 502（backend 未就绪） | IP ranges 抓取卡死 | 见 `references/npm-deploy-china.md` §2.2 |
 | `initial DERPMap is empty` | 无任何 DERP 来源 | 启用 §4 自建 DERP |
 | DNS 解析超时 / 死锁 | `override_local_dns` 接管系统 DNS | 见 `references/dns-magicdns.md` |
+| 跨网远程桌面延迟极高（局域网的两台却很快） | 未直连，全走 DERP：TCP 套 TCP | 优先开 IPv6（§1.4）；排查全过程见 `references/troubleshooting.md` §跨网 RDP 延迟高 |
 
 完整故障表、DERP 链路细节与诊断采集顺序见 `references/troubleshooting.md`。
+
+### 7.1.1 三个必须记住的陷阱
+
+这些坑在 `references/troubleshooting.md` 有完整展开，此处只列结论：
+
+1. **路由器的 UPnP 会谎报成功。** `netcheck` 显示 `PortMapping: UPnP`、日志显示
+   `portmap=active-U`，都不能证明映射真的存在（廉价路由器常见）。
+   唯一可靠的验证是**外部探针 + 抓包**。
+
+2. **tailscale 自报端口 ≠ 手工映射端口。** 即使手工配了 `外部41641 → 内部41641`，
+   tailscale 仍用 STUN 探测到的 **SNAT 随机端口**（每次都变）告诉对端，对端按此来打必然失败。
+   tailscale 无法感知手工映射，也没有配置项可覆盖。**所以手工端口映射对 tailscale 直连基本无效。**
+
+3. **`--port=41641` 的 systemd override 是伪方案。** `/etc/default/tailscaled` 里
+   `PORT="41641"` 本就生效，tailscaled 确实监听 41641。加 override 不改变任何行为，
+   只是白白重启一次服务（`ss -lunp` 可先验证实际监听端口）。
+
+**结论：跨网连通性优先上 IPv6，不要在 NAT 穿透上纠缠。**
 
 ### 7.2 备份（SQLite 在线安全备份，已实测）
 
@@ -377,6 +420,19 @@ docker exec headscale headscale nodes list
       注意 `{}`=全放行、`{"grants":[]}`=拒绝一切，收紧时先给自己留兜底规则）
 - [ ] 客户端使用 `--unattended`（Windows）+ preauthkey 接入，避免依赖 GUI 会话
 
+### 7.5 数据面连通性清单（接入后必须实测）
+
+控制面接通 ≠ 数据面可用。以下逐项确认，任一项不过关就先别交付：
+
+- [ ] `tailscale ping <对端>` 两端都跑过；承载 RDP 时**必须是 `direct`**，不能是 `via DERP`
+- [ ] `tailscale status` 里对端行显示 `direct <IP>:端口` 或 `direct [IPv6]:41641`
+- [ ] 若依赖 IPv6：`ip -6 addr show scope global` 有全局地址、`ip -6 route show` 有 `default via`、
+      `curl -6 -s https://api64.ipify.org` 出向通（**不用 `ping -6` 判断**，见 §1.4）
+- [ ] 若依赖端口映射：用**外部探针**实测（路由器 UPnP 可能谎报成功，见 §4）
+- [ ] 跨网 RDP 实际登录一次确认手感，同局域网的两台延迟低**不能**作为跨网正常的依据
+
+> 只跑 `tailscale netcheck` 看「节点都 online」是不够的——它在全中继的情况下也会一切正常。
+
 ---
 
 ## 8. 参考文件索引
@@ -387,7 +443,8 @@ docker exec headscale headscale nodes list
 | `assets/config.yaml` | 部署时直接复制（v0.29 完整可用模板，含注释） |
 | `assets/npm-compose.yml` | 服务器没有 NPM 时从零部署（国内坑已内置） |
 | `scripts/backup.sh` | 配置定时备份（§7.2） |
-| `references/troubleshooting.md` | 完整故障表 + 诊断采集顺序 + DERP 链路细节 |
+| `references/troubleshooting.md` | 完整故障表 + 诊断采集顺序 + DERP 链路细节 + **跨网 RDP 延迟高（IPv6 根治 + UPnP 谎报坑）** |
+| SKILL.md §1.4 / §7.1.1 / §7.5 | 部署期连通性规划 / 三个必记陷阱 / 数据面实测清单 |
 | `references/certificates.md` | 证书策略：LE 被墙、ZeroSSL 免网页 EAB、NPM 集成续期 |
 | `references/npm-deploy-china.md` | NPM 全新部署：默认管理员、IP ranges 卡死、81 加固 |
 | `references/dns-magicdns.md` | DNS 死锁 / MagicDNS 配置 |

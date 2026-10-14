@@ -31,10 +31,8 @@ if not os.path.exists(cert_path):
     run(f"sudo chown gnome-remote-desktop:gnome-remote-desktop {os.path.dirname(cert_path)}/rdp-tls.*")
     run(f"sudo chmod 600 {os.path.dirname(cert_path)}/rdp-tls.*")
 
-print("正在重启剪贴板桥接 (内化版)...")
-run("pkill -f rdp_bridge.py")
-bridge_path = os.path.join(os.path.dirname(__file__), "rdp_bridge.py")
-subprocess.Popen(["python3", bridge_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print("正在重启剪贴板桥接 (systemd user service)...")
+subprocess.run(["systemctl", "--user", "restart", "rdp-clipboard-bridge.service"])
 
 print("\n" + "="*50)
 print("🚀 切换至【内置 RDP】完成！")
