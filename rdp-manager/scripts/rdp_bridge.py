@@ -171,6 +171,36 @@ def set_clipboard_data(target, data):
     except:
         return False
 
+def read_targets():
+    """返回剪贴板支持的格式列表；读取失败或无属主时返回 None。
+
+    注意：这里必须用 subprocess.run 而不是 check_output。剪贴板**无属主**时
+    xclip 会以 rc=1 退出（"target TARGETS not available"），check_output 会
+    直接抛 CalledProcessError，导致上层走不到自愈分支。而 X11 协议下对无属主的
+    selection 发 ConvertSelection 会被服务器丢弃、不回 SelectionNotify，
+    opencode 侧只会一直等到 1000ms 硬超时并报 "Clipboard read timed out"。
+    """
+    try:
+        r = subprocess.run(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
+                           capture_output=True, timeout=10)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.decode('utf-8', 'replace').splitlines()
+
+
+def republish_last(reason):
+    """剪贴板丢失属主时，把上一张图重新发布回去，让 opencode 能立刻读到 image/png。"""
+    if last_png is None:
+        return False
+    if set_clipboard_data('image/png', last_png):
+        print(f"[Bridge] {reason}，已重新发布 image/png ({len(last_png)} 字节)", flush=True)
+        return True
+    log_throttled("republish", f"[Bridge] {reason}，重新发布 image/png 失败")
+    return False
+
+
 def bmp_to_png(raw_data):
     if Image is None:
         return None
@@ -195,22 +225,33 @@ print(f"RDP Clipboard Bridge 已启动 (DISPLAY={display}, "
 consecutive_failures = 0
 
 while True:
-    try:
-        # 探测当前剪贴板支持的格式
-        targets = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
-                                        stderr=subprocess.DEVNULL, timeout=10).decode('utf-8').splitlines()
-        consecutive_failures = 0
+    targets = read_targets()
 
-        # 自愈：剪贴板没有任何属主（xclip 进程被杀 / 属主异常退出）时，
-        # opencode 的原生读取会一直等不到 ConvertSelection 回应而报
-        # "Clipboard read timed out"。这里把上一张图重新发布回去。
+    if targets is None:
+        # 剪贴板无属主 / 读取失败。对无属主的 selection，X 服务器会直接丢弃
+        # ConvertSelection 且不回 SelectionNotify，opencode 只能等到 1000ms
+        # 硬超时并弹 "Clipboard read timed out"。这里把上一张图重新发布回去。
+        consecutive_failures += 1
+        republish_last("剪贴板已无属主")
+        if consecutive_failures >= 3:
+            previous = display
+            display, xauthority = detect_display()
+            apply_display(display, xauthority)
+            consecutive_failures = 0
+            if display != previous:
+                print(f"[Bridge] 显示已切换: {previous} -> {display} "
+                      f"(XAUTHORITY={xauthority or '<默认 ~/.Xauthority>'})", flush=True)
+            else:
+                print(f"[Bridge] 重新探测显示 {display}（仍不可用，稍后重试）", flush=True)
+        time.sleep(1)
+        continue
+
+    consecutive_failures = 0
+
+    try:
+        # 自愈：属主还在但内容为空时，同样把上一张图放回去
         if not targets:
-            if last_png is not None:
-                if set_clipboard_data('image/png', last_png):
-                    print(f"[Bridge] 剪贴板属主已失效，已重新发布 image/png "
-                          f"({len(last_png)} 字节)", flush=True)
-                else:
-                    log_throttled("republish", "[Bridge] 重新发布 image/png 失败")
+            republish_last("剪贴板内容为空")
             time.sleep(1)
             continue
 
@@ -260,19 +301,15 @@ while True:
                                     last_png_hash = current_hash
                                     last_bmp_hash = None
     except Exception as exc:
-        # display 失效（注销、xrdp 重连、重启）时重新发现一次
-        consecutive_failures += 1
+        # 读取/转换过程中出错（display 失效、图像解码失败等）：记录并继续
         log_throttled(
-            f"clipboard:{consecutive_failures}",
-            f"[Bridge] 剪贴板读取失败 ({type(exc).__name__}: {exc})，连续 {consecutive_failures} 次")
-        if consecutive_failures >= 3:
+            f"clipboard:{type(exc).__name__}",
+            f"[Bridge] 剪贴板处理失败 ({type(exc).__name__}: {exc})")
+        if not _probe(display, xauthority):
             previous = display
             display, xauthority = detect_display()
             apply_display(display, xauthority)
-            consecutive_failures = 0
             if display != previous:
                 print(f"[Bridge] 显示已切换: {previous} -> {display} "
                       f"(XAUTHORITY={xauthority or '<默认 ~/.Xauthority>'})", flush=True)
-            else:
-                print(f"[Bridge] 重新探测显示 {display}（仍不可用，稍后重试）", flush=True)
     time.sleep(1)
