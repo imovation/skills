@@ -44,6 +44,7 @@ description: 万能远程桌面管理工具。当用户提到远程连接断开�
    - **Wayland 会掩盖这个问题**：本机 GNOME/Wayland 下有 XWayland 兜底，xclip 属主被杀后剪贴板会立刻被 XWayland 接管，看起来一切正常；只有 xrdp 这种纯 X11 会话才会真正暴露。要在本地验证请用 `Xvfb :99`（无合成器）复现。
    - **不要让桥接反复抢剪贴板所有权**：历史上有个 bug 用 `md5(bmp)` 去比较 `md5(png)`，两者永远不等，导致桥接每轮循环都重新 `xclip -i` 抢占一次所有权，属主每 2 秒被换一次，opencode 就会撞上“旧属主刚退出、新属主未就绪”的窗口。现在同一张图只解码一次，重复出现时直接复用上次结果重发布（不会重复转换）。如果日志里 `已转换` 每隔几秒刷一次，说明这段逻辑被改坏了。
    - **不要用桥接改写文件剪贴板**：`text/uri-list` / `x-special/gnome-copied-files` 是 RDP 文件传输的输入，桥接改写（哪怕只是“顺手转成 png”）会让文件粘贴失效。`rdp_bridge.py` 顶部有专门守卫，修改时不要删。
+   - **后端必须优先 X11/xclip（血泪教训）**：Wayland 后端以 1 秒频率轮询 `wl-paste --list-types` 会触发 GNOME 46/mutter 的 `meta_window_set_stack_position_no_sync: assertion 'window->stack_position >= 0' failed` 每秒刷屏（实测 60 条/分钟），表现为**远程桌面画面持续闪烁**、**输入法拼音 preedit 被提前提交**（拼音还没选词就落进输入框）。`xclip`（X11/XWayland）轮询实测不触发。`detect_backend()` 因此优先 x11，且必须在 `detect_display()`/`apply_display()` 之后调用（否则服务在 `DISPLAY` 未导出时会误选 Wayland）。不要为了“大图”把默认后端改回 Wayland；x11 后端已有 900KB 压缩/降采样兜底。
 2. **黑屏问题**：
    - 检查并修改 `/etc/xrdp/startwm.sh`，确保开头包含：
      ```bash

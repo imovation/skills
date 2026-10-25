@@ -180,12 +180,21 @@ X11_SAFE_MAX = 900 * 1024
 
 
 def detect_backend():
+    # 优先 X11/xclip：Wayland 会话下以 1 秒频率轮询 `wl-paste --list-types`
+    # 会触发 mutter 的 `meta_window_set_stack_position_no_sync` 断言风暴
+    # （窗口每秒被重排 → 画面闪烁、输入法 preedit 被打断/提前提交）。
+    # xclip 轮询实测不触发该问题；XWayland 的剪贴板桥接能正常读写。
+    #
+    # 注意：本函数必须在 detect_display()/apply_display() 之后调用，
+    # 这样即使 systemd 用户环境里没有 DISPLAY，也能用探测到的 display。
+    if os.environ.get('DISPLAY') and shutil.which('xclip'):
+        return 'x11'
     if os.environ.get('WAYLAND_DISPLAY') and shutil.which('wl-copy') and shutil.which('wl-paste'):
         return 'wayland'
     return 'x11'
 
 
-BACKEND = detect_backend()
+BACKEND = None
 
 
 def _fit_x11_limit(target, data):
@@ -302,6 +311,9 @@ last_png_hash = None    # 最近一次发布的 PNG 哈希（场景 B 去抖）
 
 display, xauthority = detect_display()
 apply_display(display, xauthority)
+# 必须在 display 探测/应用之后判定后端：确保 X11 优先，
+# 避免服务在 DISPLAY 尚未导出时误选 Wayland 后端（见 detect_backend 注释）。
+BACKEND = detect_backend()
 print(f"RDP Clipboard Bridge 已启动 (后端={BACKEND}, DISPLAY={display}, "
       f"XAUTHORITY={xauthority or '<默认 ~/.Xauthority>'}, "
       f"PIL={'可用' if Image else '缺失'})", flush=True)
