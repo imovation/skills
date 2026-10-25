@@ -3,8 +3,8 @@ import os
 import io
 import glob
 import time
+import shutil
 import hashlib
-import urllib.parse
 
 try:
     from PIL import Image
@@ -40,7 +40,12 @@ def log_throttled(key, msg):
 # --------------------------------------------------------------------------
 
 def _probe(display, xauthority=None):
-    """该 (display, xauthority) 组合是否真的能连上 X server。"""
+    """该 (display, xauthority) 组合是否真的能连上 X server。
+
+    必须用 xdpyinfo 而不是 `xclip -t TARGETS -o`：后者在剪贴板恰好为空时
+    也会返回 rc=1（没有属主），会把一个完全正常的显示误判成不可用，
+    导致 display 探测飘忽、日志里刷「仍不可用，稍后重试」。
+    """
     env = os.environ.copy()
     env['DISPLAY'] = display
     if xauthority:
@@ -48,10 +53,12 @@ def _probe(display, xauthority=None):
     else:
         env.pop('XAUTHORITY', None)
     try:
-        r = subprocess.run(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=5, env=env)
-        return r.returncode == 0
+        if shutil.which('xdpyinfo'):
+            r = subprocess.run(['xdpyinfo'], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=8, env=env)
+            return r.returncode == 0
+        # 退化路径：退而求其次，至少确认 X socket 存在
+        return os.path.exists('/tmp/.X11-unix/X' + display.lstrip(':').split('.')[0])
     except Exception:
         return False
 
@@ -156,7 +163,69 @@ def apply_display(display, xauthority):
         os.environ.pop('XAUTHORITY', None)
 
 
+# --------------------------------------------------------------------------
+# 剪贴板后端
+#
+# Wayland 会话走 wl-copy / wl-paste（原生协议，不经过 XWayland 转接，
+#   大图也没问题）。
+# 纯 X11 会话（xrdp）走 xclip，但 **xclip 持有的 selection 数据接近 1MiB 时
+#   会彻底停止应答任何请求**（实测 1,000,002 字节正常、1,048,578 字节起超时）。
+#   一旦触发，属主变成"哑巴"，opencode 读取只会等到 1000ms 硬超时并弹
+#   "Clipboard read timed out"，桥接自己的 TARGETS 探测也会 10s 超时，
+#   于是陷入"重新发布 -> 再次哑巴"的死循环。
+#   因此 X11 后端在写入前会把过大的 PNG 压到安全线以下。
+# --------------------------------------------------------------------------
+
+X11_SAFE_MAX = 900 * 1024
+
+
+def detect_backend():
+    if os.environ.get('WAYLAND_DISPLAY') and shutil.which('wl-copy') and shutil.which('wl-paste'):
+        return 'wayland'
+    return 'x11'
+
+
+BACKEND = detect_backend()
+
+
+def _fit_x11_limit(target, data):
+    """X11 后端写入前把过大的 PNG 压到 xclip 的安全上限以内。"""
+    if target != 'image/png' or len(data) <= X11_SAFE_MAX or Image is None:
+        return data
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+            w, h = im.size
+            for kwargs in ({'optimize': True}, {}):
+                buf = io.BytesIO()
+                im.save(buf, 'PNG', compress_level=9, **kwargs)
+                out = buf.getvalue()
+                if len(out) <= X11_SAFE_MAX:
+                    print(f"[Bridge] 图片 {len(data)} 字节超出 xclip 安全上限，"
+                          f"已压缩到 {len(out)} 字节", flush=True)
+                    return out
+            for factor in (0.75, 0.5, 0.35, 0.25):
+                nw, nh = max(1, int(w * factor)), max(1, int(h * factor))
+                buf = io.BytesIO()
+                im.resize((nw, nh), Image.LANCZOS).save(buf, 'PNG', compress_level=9, optimize=True)
+                out = buf.getvalue()
+                if len(out) <= X11_SAFE_MAX:
+                    print(f"[Bridge] 图片超出 xclip 安全上限，已降采样至 {nw}x{nh} "
+                          f"({len(out)} 字节)", flush=True)
+                    return out
+    except Exception as exc:
+        log_throttled("fit", f"[Bridge] 压缩图片失败 ({type(exc).__name__}: {exc})")
+    return data
+
+
 def get_clipboard_data(target):
+    if BACKEND == 'wayland':
+        try:
+            r = subprocess.run(['wl-paste', '--type', target, '--no-newline'],
+                               capture_output=True, timeout=30)
+            return r.stdout if r.returncode == 0 else None
+        except Exception:
+            return None
     try:
         return subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', target, '-o'],
                                      stderr=subprocess.DEVNULL, timeout=30)
@@ -164,7 +233,16 @@ def get_clipboard_data(target):
         return None
 
 def set_clipboard_data(target, data):
+    if BACKEND == 'wayland':
+        try:
+            r = subprocess.run(['wl-copy', '--type', target], input=data,
+                               capture_output=True, timeout=30)
+            return r.returncode == 0
+        except Exception:
+            return False
+    data = _fit_x11_limit(target, data)
     try:
+        # 注意：这里不能用 capture_output，否则会一直等后台化的 xclip 释放管道。
         subprocess.run(['xclip', '-selection', 'clipboard', '-t', target, '-i'], input=data,
                        check=True, timeout=30)
         return True
@@ -174,12 +252,18 @@ def set_clipboard_data(target, data):
 def read_targets():
     """返回剪贴板支持的格式列表；读取失败或无属主时返回 None。
 
-    注意：这里必须用 subprocess.run 而不是 check_output。剪贴板**无属主**时
+    注意：X11 后端这里必须用 subprocess.run 而不是 check_output。剪贴板**无属主**时
     xclip 会以 rc=1 退出（"target TARGETS not available"），check_output 会
     直接抛 CalledProcessError，导致上层走不到自愈分支。而 X11 协议下对无属主的
     selection 发 ConvertSelection 会被服务器丢弃、不回 SelectionNotify，
     opencode 侧只会一直等到 1000ms 硬超时并报 "Clipboard read timed out"。
     """
+    if BACKEND == 'wayland':
+        try:
+            r = subprocess.run(['wl-paste', '--list-types'], capture_output=True, timeout=10)
+        except Exception:
+            return None
+        return r.stdout.decode('utf-8', 'replace').splitlines() if r.returncode == 0 else None
     try:
         r = subprocess.run(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
                            capture_output=True, timeout=10)
@@ -218,7 +302,7 @@ last_png_hash = None    # 最近一次发布的 PNG 哈希（场景 B 去抖）
 
 display, xauthority = detect_display()
 apply_display(display, xauthority)
-print(f"RDP Clipboard Bridge 已启动 (DISPLAY={display}, "
+print(f"RDP Clipboard Bridge 已启动 (后端={BACKEND}, DISPLAY={display}, "
       f"XAUTHORITY={xauthority or '<默认 ~/.Xauthority>'}, "
       f"PIL={'可用' if Image else '缺失'})", flush=True)
 
@@ -255,6 +339,13 @@ while True:
             time.sleep(1)
             continue
 
+        # 文件复制必须原样保留给 RDP 文件传输（gnome-remote-desktop 的 CLIPRDR）。
+        # 桥接一旦改写这些格式（历史实现曾把图片文件转成纯 image/png），
+        # 桌面/文件管理器复制到 Windows 的文件粘贴就会失效。
+        if 'text/uri-list' in targets or 'x-special/gnome-copied-files' in targets:
+            time.sleep(1)
+            continue
+
         # 场景 A: RDP 客户端复制的图片 (image/bmp) -> image/png（opencode TUI 等只认 png）
         if 'image/png' not in targets and 'image/bmp' in targets:
             raw_data = get_clipboard_data('image/bmp')
@@ -284,22 +375,9 @@ while True:
                         last_png_hash = png_hash
                         last_bmp_hash = None   # 内容来源变了，下次重新判断
 
-        # 场景 C: 发现文件路径 (复制文件)
-        elif 'text/uri-list' in targets:
-            uri_data = get_clipboard_data('text/uri-list')
-            if uri_data:
-                current_hash = hashlib.md5(uri_data).hexdigest()
-                if current_hash != last_png_hash:
-                    uri = uri_data.decode('utf-8').strip()
-                    if uri.startswith('file://'):
-                        path = urllib.parse.unquote(uri[7:])
-                        if os.path.exists(path) and path.lower().endswith(('.png', '.jpg', '.jpeg')):
-                            with open(path, 'rb') as f:
-                                img_data = f.read()
-                                mime = 'image/png' if path.lower().endswith('.png') else 'image/jpeg'
-                                if set_clipboard_data(mime, img_data):
-                                    last_png_hash = current_hash
-                                    last_bmp_hash = None
+        # 注意：这里不再有“把复制的图片文件转成 image/png”的场景。
+        # 文件复制（text/uri-list / x-special/gnome-copied-files）必须在
+        # 上面的守卫处原样放过，交给 gnome-remote-desktop 的 RDP 文件传输。
     except Exception as exc:
         # 读取/转换过程中出错（display 失效、图像解码失败等）：记录并继续
         log_throttled(
